@@ -58,8 +58,8 @@ Introducing a **robust API** for Telegram Music Bots that allows **audio & video
 
 🔑 API Access Key
 
-> Online Documentation: [music.xbitcode.com/dashboard/docs](https://music.xbitcode.com/dashboard/docs)
-> Get your API key from: [music.xbitcode.com](https://music.xbitcode.com/auth/signin)
+> Online Documentation: [music.xbitcode.com/dashboard/docs](https://t.me/BLACKFIREBOOYAHCUP/dashboard/docs)
+> Get your API key from: [music.xbitcode.com](https://t.me/BLACKFIREBOOYAHCUP/auth/signin)
 > Use your key in config.py
 > API key pattern: `xbit_10000000xx0233`
 
@@ -74,7 +74,7 @@ Introducing a **robust API** for Telegram Music Bots that allows **audio & video
 
 Need help or want to subscribe?
 
-- **Website:** [music.xbitcode.com](https://music.xbitcode.com)
+- **Website:** [music.xbitcode.com](https://t.me/BLACKFIREBOOYAHCUP)
 - **Telegram Channel:** [@BLACKFIREBOOYAHCUP](https://t.me/BLACKFIREBOOYAHCUP)
 - **Telegram Group:** [@AeraxTi](https://t.me/AeraxTi)
 - **Telegram User:** [@ade2321czf](https://t.me/ade2321czf)
