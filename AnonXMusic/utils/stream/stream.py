@@ -56,7 +56,7 @@ async def stream(
                 await put_queue(
                     chat_id,
                     original_chat_id,
-                    f"vid_{vidid}",
+                    vidid,
                     title,
                     duration_min,
                     user_name,
@@ -73,22 +73,20 @@ async def stream(
                     db[chat_id] = []
                 status = True if video else None
                 try:
-                    file_path, direct = await YouTube.download(
-                        vidid, mystic, video=status, videoid=True
-                    )
+                    stream_url = await YouTube.get_stream_url(vidid, video=status)
                 except:
                     raise AssistantErr(_["play_14"])
                 await Anony.join_call(
                     chat_id,
                     original_chat_id,
-                    file_path,
+                    stream_url,
                     video=status,
                     image=thumbnail,
                 )
                 await put_queue(
                     chat_id,
                     original_chat_id,
-                    file_path if direct else f"vid_{vidid}",
+                    vidid,
                     title,
                     duration_min,
                     user_name,
@@ -137,16 +135,14 @@ async def stream(
         thumbnail = result["thumb"]
         status = True if video else None
         try:
-            file_path, direct = await YouTube.download(
-                vidid, mystic, videoid=True, video=status
-            )
+            stream_url = await YouTube.get_stream_url(vidid, video=status)
         except:
             raise AssistantErr(_["play_14"])
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
                 original_chat_id,
-                file_path if direct else f"vid_{vidid}",
+                vidid,
                 title,
                 duration_min,
                 user_name,
@@ -167,14 +163,14 @@ async def stream(
             await Anony.join_call(
                 chat_id,
                 original_chat_id,
-                file_path,
+                stream_url,
                 video=status,
                 image=thumbnail,
             )
             await put_queue(
                 chat_id,
                 original_chat_id,
-                file_path if direct else f"vid_{vidid}",
+                vidid,
                 title,
                 duration_min,
                 user_name,
@@ -311,7 +307,7 @@ async def stream(
             await put_queue(
                 chat_id,
                 original_chat_id,
-                f"live_{vidid}",
+                vidid,
                 title,
                 duration_min,
                 user_name,
@@ -329,20 +325,20 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            n, file_path = await YouTube.video(link)
+            n, stream_url = await YouTube.video(link)
             if n == 0:
                 raise AssistantErr(_["str_3"])
             await Anony.join_call(
                 chat_id,
                 original_chat_id,
-                file_path,
+                stream_url,
                 video=status,
                 image=thumbnail if thumbnail else None,
             )
             await put_queue(
                 chat_id,
                 original_chat_id,
-                f"live_{vidid}",
+                vidid,
                 title,
                 duration_min,
                 user_name,
