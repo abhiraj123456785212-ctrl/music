@@ -33,9 +33,11 @@ async def stream(
         return
     if forceplay:
         await Anony.force_stop_stream(chat_id)
+        
     if streamtype == "playlist":
         msg = f"{_['play_19']}\n\n"
         count = 0
+        first_song_played = False
         for search in result:
             if int(count) == config.PLAYLIST_FETCH_LIMIT:
                 continue
@@ -53,7 +55,9 @@ async def stream(
                 continue
             if duration_sec > config.DURATION_LIMIT:
                 continue
+                
             if await is_active_chat(chat_id):
+                # बाद के गाने क्यू में डालो
                 await put_queue(
                     chat_id,
                     original_chat_id,
@@ -70,15 +74,18 @@ async def stream(
                 msg += f"{count}. {title[:70]}\n"
                 msg += f"{_['play_20']} {position}\n\n"
             else:
+                # पहला गाना – चैट अभी एक्टिव नहीं है, तो तुरंत प्ले करो
                 if not forceplay:
                     db[chat_id] = []
                 status = True if video else None
                 try:
+                    # सिर्फ URL fetch करो (डाउनलोड नहीं)
                     file_path, direct = await YouTube.download(
                         vidid, mystic, video=status, videoid=True
                     )
-                except:
+                except Exception as e:
                     raise AssistantErr(_["play_14"])
+                # जॉइन कॉल और प्ले शुरू करो
                 await Anony.join_call(
                     chat_id,
                     original_chat_id,
@@ -86,19 +93,23 @@ async def stream(
                     video=status,
                     image=thumbnail,
                 )
-                await put_queue(
-                    chat_id,
-                    original_chat_id,
-                    file_path if direct else f"vid_{vidid}",
-                    title,
-                    duration_min,
-                    user_name,
-                    vidid,
-                    user_id,
-                    "video" if video else "audio",
-                    forceplay=forceplay,
-                )
-                img = await get_thumb(vidid,user_id)
+                # पहले गाने को क्यू में मत डालो (वह पहले से चल रहा है)
+                # लेकिन db[chat_id] में उसे जोड़ना ज़रूरी है (ताकि कंट्रोल पैनल दिखे)
+                # हम पहले से ही db[chat_id] को खाली कर चुके हैं, अब पहला गाना डालते हैं
+                db[chat_id].append({
+                    "title": title,
+                    "dur": duration_min,
+                    "streamtype": "video" if video else "audio",
+                    "by": user_name,
+                    "user_id": user_id,
+                    "chat_id": original_chat_id,
+                    "file": file_path,
+                    "vidid": vidid,
+                    "seconds": duration_sec,
+                    "played": 0,
+                })
+                # थंबनेल और मैसेज भेजें
+                img = await get_thumb(vidid, user_id)
                 button = stream_markup(_, chat_id)
                 run = await app.send_photo(
                     original_chat_id,
@@ -113,23 +124,32 @@ async def stream(
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "stream"
+                first_song_played = True
+                count += 1
+                continue  # बाकी गाने अगली iteration में क्यू में डालें (अब चैट एक्टिव हो गई है)
         if count == 0:
+            await mystic.edit_text(_["play_3"])
             return
         else:
-            link = await AnonyBin(msg)
-            lines = msg.count("\n")
-            if lines >= 17:
-                car = os.linesep.join(msg.split(os.linesep)[:17])
-            else:
-                car = msg
-            carbon = await Carbon.generate(car, randint(100, 10000000))
-            upl = close_markup(_)
-            return await app.send_photo(
-                original_chat_id,
-                photo=carbon,
-                caption=_["play_21"].format(position, link),
-                reply_markup=upl,
-            )
+            # सारांश (summary) भेजें, लेकिन सिर्फ तब जब एक से अधिक गाने हों या पहला गाना चल चुका हो और बाकी हों
+            if count > 1 or (count == 1 and not first_song_played):
+                link = await AnonyBin(msg)
+                lines = msg.count("\n")
+                if lines >= 17:
+                    car = os.linesep.join(msg.split(os.linesep)[:17])
+                else:
+                    car = msg
+                carbon = await Carbon.generate(car, randint(100, 10000000))
+                upl = close_markup(_)
+                await app.send_photo(
+                    original_chat_id,
+                    photo=carbon,
+                    caption=_["play_21"].format(count, link),
+                    reply_markup=upl,
+                )
+            await mystic.delete()
+        return
+        
     elif streamtype == "youtube":
         link = result["link"]
         vidid = result["vidid"]
@@ -184,7 +204,7 @@ async def stream(
                 "video" if video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid,user_id)
+            img = await get_thumb(vidid, user_id)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -352,7 +372,7 @@ async def stream(
                 "video" if video else "audio",
                 forceplay=forceplay,
             )
-            img = await get_thumb(vidid,user_id)
+            img = await get_thumb(vidid, user_id)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
