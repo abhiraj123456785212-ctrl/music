@@ -1,22 +1,15 @@
 import asyncio
 import glob
-import json
 import os
 import random
 import re
-from concurrent.futures import ThreadPoolExecutor
 from typing import Union
-import string
-import requests
 import yt_dlp
-import aiohttp   # <-- यह import जोड़ा गया है
+import aiohttp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from ytSearch import VideosSearch, Playlist
+from ytSearch import VideosSearch
 from AnonXMusic import LOGGER
-from AnonXMusic.utils.database import is_on_off
 from AnonXMusic.utils.formatters import time_to_seconds
 from config import YT_API_KEY, YTPROXY_URL as YTPROXY
 
@@ -50,7 +43,6 @@ class YouTubeAPI:
             "cookie_downloads": 0,
             "existing_files": 0
         }
-
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -176,6 +168,7 @@ class YouTubeAPI:
         else:
             return 0, stderr.decode()
 
+    # ========== UPDATED PLAYLIST FUNCTION USING yt-dlp ==========
     async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
         if videoid:
             link = self.listbase + link
@@ -186,27 +179,43 @@ class YouTubeAPI:
         elif "&si=" in link:
             link = link.split("&si=")[0]
 
-        playlist = await Playlist.get(link)
-        if playlist:
-            videos = []
-            for video in playlist["videos"][:limit]:
-                try:
-                    duration = video.get("duration")
+        ydl_opts = {
+            "quiet": True,
+            "extract_flat": True,
+            "force_generic_extractor": False,
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(link, download=False)
+                if "entries" not in info:
+                    return None
+                videos = []
+                for entry in info["entries"][:limit]:
+                    if entry is None:
+                        continue
+                    vidid = entry.get("id")
+                    if not vidid:
+                        continue
+                    title = entry.get("title", "Unknown")
+                    duration = entry.get("duration")
                     if duration:
-                        duration_sec = int(time_to_seconds(duration))
+                        duration_min = f"{duration//60}:{duration%60:02d}"
+                        duration_sec = duration
                     else:
+                        duration_min = "0:00"
                         duration_sec = 0
+                    thumbnail = f"https://img.youtube.com/vi/{vidid}/hqdefault.jpg"
                     videos.append({
-                        "vidid": video["id"],
-                        "title": video.get("title", "Unknown"),
-                        "duration_min": duration,
+                        "vidid": vidid,
+                        "title": title,
+                        "duration_min": duration_min,
                         "duration_sec": duration_sec,
-                        "thumbnail": video.get("thumbnails", [{}])[0].get("url", "").split("?")[0] if video.get("thumbnails") else "",
+                        "thumbnail": thumbnail,
                     })
-                except:
-                    continue
-            return videos
-        return None
+                return videos
+        except Exception as e:
+            logger.error(f"Playlist fetch error: {e}")
+            return None
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -319,7 +328,6 @@ class YouTubeAPI:
             LOGGER(__name__).error(f"Error in slider: {str(e)}")
             raise ValueError("Failed to fetch video details")
 
-    # ========== MODIFIED DOWNLOAD METHOD (NO FILE DOWNLOAD) ==========
     async def download(
         self,
         link: str,
@@ -344,7 +352,6 @@ class YouTubeAPI:
         if not vid_id:
             return None, False
 
-        # If called for songaudio or songvideo (not used in this bot), simply return None
         if songvideo or songaudio:
             return None, False
 
@@ -360,10 +367,9 @@ class YouTubeAPI:
                     if data.get("status") != "success":
                         logger.error(f"API error: {data.get('message')}")
                         return None, False
-                    # choose audio or video stream
                     stream_url = data.get("video_url" if video else "audio_url")
                     if not stream_url:
-                        stream_url = data.get("video_url")  # fallback
+                        stream_url = data.get("video_url")
                     if not stream_url:
                         logger.error(f"No stream URL for {vid_id}")
                         return None, False
