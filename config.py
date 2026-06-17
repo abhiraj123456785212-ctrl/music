@@ -6,6 +6,16 @@ from pyrogram import filters
 
 load_dotenv()
 
+# ===================== PROXY (India Block Fix) =====================
+# यहाँ अपना Proxy डालें – अगर Tor use करते हैं तो नीचे वाला इस्तेमाल करें
+# अगर MTProto Proxy है तो hostname और port बदलें
+PROXY = {
+    "scheme": "socks5",       # "socks5" या "http"
+    "hostname": "127.0.0.1",  # Tor के लिए 127.0.0.1
+    "port": 9050,             # Tor का port 9050 है
+}
+# ===================================================================
+
 # Get this value from my.telegram.org/apps
 API_ID = int(getenv("API_ID"))
 API_HASH = getenv("API_HASH")
@@ -16,11 +26,13 @@ BOT_TOKEN = getenv("BOT_TOKEN")
 # Get your mongo url from cloud.mongodb.com
 MONGO_DB_URI = getenv("MONGO_DB_URI", None)
 
-# Vars For API End Pont.
-YTPROXY_URL = getenv("YTPROXY_URL", 'http://127.0.0.1:9898') ## xBit Music Endpoint.
-YT_API_KEY = getenv("YT_API_KEY" , None ) ## Your API key like: xbit_10000000xx0233 Get from  https://t.me/tgmusic_apibot
+# Vars For API End Point.
+# यह आपका अपना backend है जो 127.0.0.1:9898 पर चल रहा है
+YTPROXY_URL = getenv("YTPROXY_URL", 'http://127.0.0.1:9898')
+# आपके backend की API key (जो youtube_api.py में VALID_API_KEY है)
+YT_API_KEY = getenv("YT_API_KEY", "my_secret_key_2025")
 
-## Other vaes
+## Other vars
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 300))
 
 # Chat id of a group for logging bot's activities
@@ -74,7 +86,7 @@ CACHE_SLEEP = int(getenv("CACHE_SLEEP" , "3600"))   #60*60
 
 
 # Get your pyrogram v2 session from @StringFatherBot on Telegram
-STRING1 = getenv("STRING_SESSION", None)
+STRING1 = getenv("STRING_SESSION", None)   # यही use करें
 STRING2 = getenv("STRING_SESSION2", None)
 STRING3 = getenv("STRING_SESSION3", None)
 STRING4 = getenv("STRING_SESSION4", None)
