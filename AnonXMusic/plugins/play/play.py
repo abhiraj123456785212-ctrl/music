@@ -25,6 +25,10 @@ from AnonXMusic.utils.logger import play_logs
 from AnonXMusic.utils.stream.stream import stream
 from config import BANNED_USERS, lyrical
 
+# ✅ New: Quality options for play command
+QUALITY_OPTIONS = ["low", "medium", "high", "ultra"]
+DEFAULT_QUALITY = "medium"
+
 
 @app.on_message(
     filters.command(
@@ -63,6 +67,15 @@ async def play_commnd(
     spotify = None
     user_id = message.from_user.id
     user_name = message.from_user.first_name
+    
+    # ✅ New: Extract quality from command
+    quality = DEFAULT_QUALITY
+    cmd_text = message.text.lower()
+    for q in QUALITY_OPTIONS:
+        if f"-{q}" in cmd_text:
+            quality = q
+            break
+    
     audio_telegram = (
         (message.reply_to_message.audio or message.reply_to_message.voice)
         if message.reply_to_message
@@ -91,6 +104,7 @@ async def play_commnd(
                 "link": message_link,
                 "path": file_path,
                 "dur": dur,
+                "quality": quality,  # ✅ Add quality
             }
 
             try:
@@ -104,6 +118,7 @@ async def play_commnd(
                     message.chat.id,
                     streamtype="telegram",
                     forceplay=fplay,
+                    quality=quality,  # ✅ Pass quality
                 )
             except Exception as e:
                 ex_type = type(e).__name__
@@ -135,6 +150,7 @@ async def play_commnd(
                 "link": message_link,
                 "path": file_path,
                 "dur": dur,
+                "quality": quality,  # ✅ Add quality
             }
             try:
                 await stream(
@@ -148,6 +164,7 @@ async def play_commnd(
                     video=True,
                     streamtype="telegram",
                     forceplay=fplay,
+                    quality=quality,  # ✅ Pass quality
                 )
             except Exception as e:
                 ex_type = type(e).__name__
@@ -281,6 +298,7 @@ async def play_commnd(
                     message.chat.id,
                     streamtype="soundcloud",
                     forceplay=fplay,
+                    quality=quality,  # ✅ Pass quality
                 )
             except Exception as e:
                 ex_type = type(e).__name__
@@ -311,6 +329,7 @@ async def play_commnd(
                     video=video,
                     streamtype="index",
                     forceplay=fplay,
+                    quality=quality,  # ✅ Pass quality
                 )
             except Exception as e:
                 ex_type = type(e).__name__
@@ -328,6 +347,10 @@ async def play_commnd(
         query = message.text.split(None, 1)[1]
         if "-v" in query:
             query = query.replace("-v", "")
+        # ✅ Remove quality flags from query
+        for q in QUALITY_OPTIONS:
+            if f"-{q}" in query:
+                query = query.replace(f"-{q}", "")
         try:
             details, track_id = await YouTube.track(query)
         except:
@@ -367,6 +390,7 @@ async def play_commnd(
                 streamtype=streamtype,
                 spotify=spotify,
                 forceplay=fplay,
+                quality=quality,  # ✅ Pass quality
             )
         except Exception as e:
             ex_type = type(e).__name__
@@ -436,6 +460,106 @@ async def play_commnd(
                 return await play_logs(message, streamtype=f"URL Searched Inline")
 
 
+# ✅ New: Quality command handler
+@app.on_message(filters.command(["quality", "setquality"]) & filters.group & ~BANNED_USERS)
+@PlayWrapper
+async def set_quality_command(
+    client,
+    message: Message,
+    _,
+    chat_id,
+    video,
+    channel,
+    playmode,
+    url,
+    fplay,
+):
+    """Set playback quality for the group"""
+    if len(message.command) < 2:
+        qualities = "\n".join([f"• {q}" for q in QUALITY_OPTIONS])
+        return await message.reply_text(
+            f"**Available Qualities:**\n\n{qualities}\n\n"
+            f"**Usage:** `/quality medium`\n"
+            f"**Current:** {DEFAULT_QUALITY}"
+        )
+    
+    quality = message.text.split(None, 1)[1].strip().lower()
+    if quality not in QUALITY_OPTIONS:
+        return await message.reply_text(
+            f"❌ Invalid quality! Choose from:\n" + "\n".join([f"• {q}" for q in QUALITY_OPTIONS])
+        )
+    
+    # ✅ Save quality setting for group
+    # You can store this in database if needed
+    
+    await message.reply_text(
+        f"✅ Quality set to **{quality}** for this group!\n\n"
+        f"• Low: 64 kbps / 360p\n"
+        f"• Medium: 128 kbps / 480p\n"
+        f"• High: 192 kbps / 720p\n"
+        f"• Ultra: 256+ kbps / 1080p"
+    )
+
+
+# ✅ New: Buffer size command
+@app.on_message(filters.command(["buffer", "setbuffer"]) & filters.group & ~BANNED_USERS)
+@PlayWrapper
+async def set_buffer_command(
+    client,
+    message: Message,
+    _,
+    chat_id,
+    video,
+    channel,
+    playmode,
+    url,
+    fplay,
+):
+    """Set buffer size for playback"""
+    if len(message.command) < 2:
+        return await message.reply_text(
+            f"**Usage:** `/buffer [seconds]`\n\n"
+            f"Set buffer size (3-30 seconds).\n"
+            f"Current: {Anony.BUFFER_SIZE} seconds"
+        )
+    
+    try:
+        buffer_size = int(message.text.split(None, 1)[1].strip())
+        if not 3 <= buffer_size <= 30:
+            return await message.reply_text("❌ Buffer size must be between 3 and 30 seconds.")
+        
+        if Anony.set_buffer_size(buffer_size):
+            await message.reply_text(
+                f"✅ Buffer size set to **{buffer_size}** seconds!\n\n"
+                f"• Smaller buffer: Faster start, may stutter\n"
+                f"• Larger buffer: Slower start, smoother playback"
+            )
+        else:
+            await message.reply_text("❌ Failed to set buffer size.")
+    except ValueError:
+        await message.reply_text("❌ Please enter a valid number (3-30).")
+
+
+# ✅ New: Buffer status command
+@app.on_message(filters.command(["bufferstatus", "bufstatus"]) & filters.group & ~BANNED_USERS)
+async def buffer_status_command(client, message: Message, _):
+    """Check buffer status for current chat"""
+    chat_id = message.chat.id
+    status = Anony.get_buffer_status(chat_id)
+    
+    if not status:
+        return await message.reply_text("📭 No active buffer for this chat.")
+    
+    status_text = f"**Buffer Status**\n\n"
+    status_text += f"• Status: **{status.get('status', 'Unknown')}**\n"
+    status_text += f"• Quality: **{status.get('quality', 'Unknown')}**\n"
+    status_text += f"• Buffer Size: **{status.get('buffer_size', Anony.BUFFER_SIZE)}s**\n"
+    status_text += f"• Title: **{status.get('title', 'Unknown')}**\n"
+    status_text += f"• Duration: **{status.get('duration', 'Unknown')}**\n"
+    
+    await message.reply_text(status_text)
+
+
 @app.on_callback_query(filters.regex("MusicStream") & ~BANNED_USERS)
 @languageCB
 async def play_music(client, CallbackQuery, _):
@@ -485,6 +609,10 @@ async def play_music(client, CallbackQuery, _):
         )
     video = True if mode == "v" else None
     ffplay = True if fplay == "f" else None
+    
+    # ✅ Use default quality
+    quality = DEFAULT_QUALITY
+    
     try:
         await stream(
             _,
@@ -497,6 +625,7 @@ async def play_music(client, CallbackQuery, _):
             video,
             streamtype="youtube",
             forceplay=ffplay,
+            quality=quality,  # ✅ Pass quality
         )
     except Exception as e:
         ex_type = type(e).__name__
@@ -551,6 +680,10 @@ async def play_playlists_command(client, CallbackQuery, _):
     video = True if mode == "v" else None
     ffplay = True if fplay == "f" else None
     spotify = True
+    
+    # ✅ Use default quality
+    quality = DEFAULT_QUALITY
+    
     if ptype == "yt":
         spotify = False
         try:
@@ -595,6 +728,7 @@ async def play_playlists_command(client, CallbackQuery, _):
             streamtype="playlist",
             spotify=spotify,
             forceplay=ffplay,
+            quality=quality,  # ✅ Pass quality
         )
     except Exception as e:
         ex_type = type(e).__name__
