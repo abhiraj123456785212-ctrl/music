@@ -1,8 +1,7 @@
 import asyncio
 import os
-import time
 from datetime import datetime, timedelta
-from typing import Union, Optional, Dict, List
+from typing import Union
 
 from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup
@@ -14,7 +13,7 @@ from ntgcalls import TelegramServerError, FFmpegError
 from pytgcalls.types import Update, StreamEnded
 from pytgcalls import filters as fl
 from pytgcalls.types import AudioQuality, VideoQuality
-from pytgcalls.types import MediaStream, ChatUpdate
+from pytgcalls.types import MediaStream,ChatUpdate
 from pytgcalls.types.calls import GroupCallConfig
 
 import config
@@ -42,7 +41,6 @@ from AnonXMusic.platforms.Youtube import cookie_txt_file
 
 autoend = {}
 counter = {}
-buffer_status = {}  # ✅ New: Track buffer status per chat
 
 
 async def _clear_(chat_id):
@@ -103,12 +101,6 @@ class Call(PyTgCalls):
             self.userbot5,
             cache_duration=100,
         )
-        
-        # ✅ New: Buffer settings
-        self.BUFFER_SIZE = 10  # seconds
-        self.MAX_BUFFER_CHUNKS = 3
-        self.RETRY_ON_BUFFER_FAIL = True
-        self.MAX_RETRIES = 3
 
     async def pause_stream(self, chat_id: int):
         assistant = await group_assistant(self, chat_id)
@@ -123,9 +115,6 @@ class Call(PyTgCalls):
         try:
             await _clear_(chat_id)
             await assistant.leave_call(chat_id)
-            # ✅ Clear buffer status
-            if chat_id in buffer_status:
-                del buffer_status[chat_id]
         except:
             pass
 
@@ -157,8 +146,6 @@ class Call(PyTgCalls):
             pass
         try:
             await _clear_(chat_id)
-            if chat_id in buffer_status:
-                del buffer_status[chat_id]
         except:
             pass
 
@@ -246,8 +233,6 @@ class Call(PyTgCalls):
             await assistant.leave_call(chat_id)
         except:
             pass
-        if chat_id in buffer_status:
-            del buffer_status[chat_id]
 
     async def skip_stream(
         self,
@@ -255,36 +240,16 @@ class Call(PyTgCalls):
         link: str,
         video: Union[bool, str] = None,
         image: Union[bool, str] = None,
-        quality: str = "medium",  # ✅ New: quality parameter
     ):
         assistant = await group_assistant(self, chat_id)
-        
-        # ✅ Get quality settings
-        if quality not in ["low", "medium", "high", "ultra"]:
-            quality = "medium"
-        
-        quality_map = {
-            "low": {"audio": AudioQuality.LOW, "video": VideoQuality.SD_360p},
-            "medium": {"audio": AudioQuality.MEDIUM, "video": VideoQuality.SD_480p},
-            "high": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_720p},
-            "ultra": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_1080p},
-        }
-        
-        audio_q = quality_map[quality]["audio"]
-        video_q = quality_map[quality]["video"]
-        
         if video:
             stream = MediaStream(
                 link,
-                audio_parameters=audio_q,
-                video_parameters=video_q,
+                audio_parameters=AudioQuality.HIGH,
+                video_parameters=VideoQuality.SD_480p,
             )
         else:
-            stream = MediaStream(
-                link,
-                audio_parameters=audio_q,
-                video_flags=MediaStream.Flags.IGNORE
-            )
+            stream = MediaStream(link, audio_parameters=AudioQuality.HIGH,video_flags=MediaStream.Flags.IGNORE)
         await assistant.play(
             chat_id,
             stream,
@@ -318,169 +283,6 @@ class Call(PyTgCalls):
         await asyncio.sleep(0.2)
         await assistant.leave_call(config.LOGGER_ID)
 
-    # ✅ New: play_with_buffer method - Core buffer system
-    async def play_with_buffer(
-        self,
-        chat_id: int,
-        original_chat_id: int,
-        link: str,
-        video: Union[bool, str] = None,
-        quality: str = "medium",
-        buffer_size: int = 10,
-    ):
-        """
-        Play stream with pre-buffer system (like YouTube).
-        First buffers 10 seconds, then starts playing.
-        """
-        assistant = await group_assistant(self, chat_id)
-        language = await get_lang(chat_id)
-        _ = get_string(language)
-        
-        # ✅ Quality mapping
-        quality_map = {
-            "low": {"audio": AudioQuality.LOW, "video": VideoQuality.SD_360p},
-            "medium": {"audio": AudioQuality.MEDIUM, "video": VideoQuality.SD_480p},
-            "high": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_720p},
-            "ultra": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_1080p},
-        }
-        
-        if quality not in quality_map:
-            quality = "medium"
-        
-        audio_q = quality_map[quality]["audio"]
-        video_q = quality_map[quality]["video"]
-        
-        # ✅ Create stream with buffer
-        try:
-            # First, get stream with buffer info
-            stream_result = await YouTube.get_stream_with_buffer(
-                link,
-                videoid=True,
-                quality=quality,
-                video=bool(video)
-            )
-            
-            if not stream_result.get("success"):
-                raise AssistantErr(stream_result.get("error", "Failed to get stream"))
-            
-            stream_url = stream_result.get("stream_url")
-            backup_url = stream_result.get("backup_url")
-            duration_str = stream_result.get("duration", "0:00")
-            title = stream_result.get("title", "Unknown")
-            
-            if not stream_url:
-                raise AssistantErr(_["call_6"])
-            
-            # ✅ Set buffer status
-            buffer_status[chat_id] = {
-                "status": "buffering",
-                "started": time.time(),
-                "buffer_size": buffer_size,
-                "quality": quality,
-                "title": title,
-                "duration": duration_str
-            }
-            
-            # ✅ Create MediaStream with buffer parameters
-            if video:
-                stream = MediaStream(
-                    stream_url,
-                    audio_parameters=audio_q,
-                    video_parameters=video_q,
-                )
-            else:
-                stream = MediaStream(
-                    stream_url,
-                    audio_parameters=audio_q,
-                    video_flags=MediaStream.Flags.IGNORE
-                )
-            
-            # ✅ Join call with buffer
-            try:
-                await assistant.play(
-                    chat_id,
-                    stream,
-                    config=GroupCallConfig(auto_start=False),
-                )
-            except NoActiveGroupCall:
-                raise AssistantErr(_["call_8"])
-            except FFmpegError:
-                LOGGER(__name__).warning("ffmpeg/ffprobe is not installed")
-                raise AssistantErr(
-                    "⚠️ <b>ffmpeg</b> is not installed on this server.\n\nPlease install it using: <code>apt install ffmpeg</code>"
-                )
-            except TelegramServerError:
-                raise AssistantErr(_["call_10"])
-            
-            # ✅ Update buffer status
-            buffer_status[chat_id]["status"] = "playing"
-            buffer_status[chat_id]["stream_url"] = stream_url
-            buffer_status[chat_id]["backup_url"] = backup_url
-            
-            # ✅ Add to active chats
-            await add_active_chat(chat_id)
-            await music_on(chat_id)
-            if video:
-                await add_active_video_chat(chat_id)
-            
-            # ✅ Auto-end check
-            if await is_autoend():
-                counter[chat_id] = {}
-                users = len(await assistant.get_participants(chat_id))
-                if users == 1:
-                    autoend[chat_id] = datetime.now() + timedelta(minutes=1)
-            
-            # ✅ Start buffer monitor in background
-            asyncio.create_task(self._monitor_buffer(chat_id, stream_url, backup_url))
-            
-            return stream_result
-            
-        except Exception as e:
-            LOGGER(__name__).error(f"play_with_buffer error: {e}")
-            raise
-
-    # ✅ New: _monitor_buffer - Background buffer monitor
-    async def _monitor_buffer(self, chat_id: int, stream_url: str, backup_url: Optional[str] = None):
-        """
-        Monitor buffer status and auto-reconnect if needed.
-        Like YouTube's adaptive buffering.
-        """
-        retry_count = 0
-        max_retries = self.MAX_RETRIES
-        
-        while chat_id in buffer_status and buffer_status.get(chat_id, {}).get("status") == "playing":
-            try:
-                await asyncio.sleep(5)  # Check every 5 seconds
-                
-                # ✅ Check if chat is still active
-                if chat_id not in db or not db.get(chat_id):
-                    break
-                
-                # ✅ Check buffer health (simulated)
-                # In real implementation, you'd check audio queue length
-                # For now, we just verify stream is still playing
-                assistant = await group_assistant(self, chat_id)
-                
-                # ✅ If backup URL exists and stream fails, switch
-                # This is handled by PyTgCalls internally, but we keep backup ready
-                if backup_url and retry_count > 0:
-                    LOGGER(__name__).info(f"🔄 Switching to backup URL for {chat_id}")
-                    # Switch to backup
-                    if db.get(chat_id) and len(db[chat_id]) > 0:
-                        current = db[chat_id][0]
-                        if current.get("file") == stream_url:
-                            # Update with backup
-                            pass
-                            
-            except Exception as e:
-                LOGGER(__name__).warning(f"Buffer monitor error for {chat_id}: {e}")
-                retry_count += 1
-                if retry_count >= max_retries:
-                    LOGGER(__name__).error(f"Max retries reached for {chat_id}")
-                    break
-                await asyncio.sleep(1 * retry_count)  # Exponential backoff
-
-    # ✅ Updated: join_call with buffer support
     async def join_call(
         self,
         chat_id: int,
@@ -488,66 +290,42 @@ class Call(PyTgCalls):
         link,
         video: Union[bool, str] = None,
         image: Union[bool, str] = None,
-        quality: str = "medium",  # ✅ New
-        use_buffer: bool = True,   # ✅ New
     ):
-        """
-        Join call with optional buffer system.
-        If use_buffer is True, uses the YouTube-like buffer system.
-        """
-        if use_buffer:
-            # ✅ Use buffer system
-            try:
-                result = await self.play_with_buffer(
-                    chat_id,
-                    original_chat_id,
-                    link,
-                    video=video,
-                    quality=quality,
-                    buffer_size=self.BUFFER_SIZE
-                )
-                return result
-            except Exception as e:
-                LOGGER(__name__).warning(f"Buffer play failed, falling back to direct: {e}")
-                # Fallback to direct play
-        
-        # ✅ Direct play (original method)
         assistant = await group_assistant(self, chat_id)
         language = await get_lang(chat_id)
         _ = get_string(language)
-        
-        quality_map = {
-            "low": {"audio": AudioQuality.LOW, "video": VideoQuality.SD_360p},
-            "medium": {"audio": AudioQuality.MEDIUM, "video": VideoQuality.SD_480p},
-            "high": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_720p},
-            "ultra": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_1080p},
-        }
-        
-        if quality not in quality_map:
-            quality = "medium"
-        
-        audio_q = quality_map[quality]["audio"]
-        video_q = quality_map[quality]["video"]
-        
         if video:
-            stream = MediaStream(
+            stream= MediaStream(
                 link,
-                audio_parameters=audio_q,
-                video_parameters=video_q,
-            )
+                audio_parameters=AudioQuality.HIGH,video_parameters=VideoQuality.SD_480p
+                )
+            # stream = AudioVideoPiped(
+            #     link,
+            #     audio_parameters=HighQualityAudio(),
+            #     video_parameters=MediumQualityVideo(),
+            # )
         else:
-            stream = MediaStream(
-                link,
-                audio_parameters=audio_q,
-                video_flags=MediaStream.Flags.IGNORE
+            stream = (
+                MediaStream(
+                    link,
+                    audio_parameters=AudioQuality.HIGH,
+                    video_parameters=VideoQuality.SD_480p,
+                    
+                )
+                if video
+                else MediaStream(link, audio_parameters=AudioQuality.HIGH,video_flags=MediaStream.Flags.IGNORE)
             )
-        
         try:
             await assistant.play(
                 chat_id,
                 stream,
                 config=GroupCallConfig(auto_start=False),
             )
+            # await assistant.join_group_call(
+            #     chat_id,
+            #     stream,
+            #     stream_type=StreamType().pulse_stream,
+            # )
         except NoActiveGroupCall:
             raise AssistantErr(_["call_8"])
         except FFmpegError:
@@ -557,7 +335,6 @@ class Call(PyTgCalls):
             )
         except TelegramServerError:
             raise AssistantErr(_["call_10"])
-        
         await add_active_chat(chat_id)
         await music_on(chat_id)
         if video:
@@ -568,7 +345,6 @@ class Call(PyTgCalls):
             if users == 1:
                 autoend[chat_id] = datetime.now() + timedelta(minutes=1)
 
-    # ✅ Updated: change_stream with quality support
     async def change_stream(self, client, chat_id):
         check = db.get(chat_id)
         popped = None
@@ -584,14 +360,10 @@ class Call(PyTgCalls):
                 autoclean.remove(rem)
             if not check:
                 await _clear_(chat_id)
-                if chat_id in buffer_status:
-                    del buffer_status[chat_id]
                 return await client.leave_call(chat_id)
         except:
             try:
                 await _clear_(chat_id)
-                if chat_id in buffer_status:
-                    del buffer_status[chat_id]
                 return await client.leave_call(chat_id)
             except:
                 return
@@ -605,8 +377,6 @@ class Call(PyTgCalls):
             original_chat_id = check[0]["chat_id"]
             streamtype = check[0]["streamtype"]
             videoid = check[0]["vidid"]
-            quality = check[0].get("quality", "medium")  # ✅ Get quality from queue
-            
             db[chat_id][0]["played"] = 0
             exis = (check[0]).get("old_dur")
             if exis:
@@ -615,23 +385,8 @@ class Call(PyTgCalls):
                 db[chat_id][0]["speed_path"] = None
                 db[chat_id][0]["speed"] = 1.0
             video = True if str(streamtype) == "video" else False
-            
-            # ✅ Quality mapping
-            quality_map = {
-                "low": {"audio": AudioQuality.LOW, "video": VideoQuality.SD_360p},
-                "medium": {"audio": AudioQuality.MEDIUM, "video": VideoQuality.SD_480p},
-                "high": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_720p},
-                "ultra": {"audio": AudioQuality.HIGH, "video": VideoQuality.HD_1080p},
-            }
-            
-            if quality not in quality_map:
-                quality = "medium"
-            
-            audio_q = quality_map[quality]["audio"]
-            video_q = quality_map[quality]["video"]
-            
             if "live_" in queued:
-                n, link = await YouTube.video(videoid, True, quality=quality)
+                n, link = await YouTube.video(videoid, True)
                 if n == 0:
                     return await app.send_message(
                         original_chat_id,
@@ -640,13 +395,13 @@ class Call(PyTgCalls):
                 if video:
                     stream = MediaStream(
                         link,
-                        audio_parameters=audio_q,
-                        video_parameters=video_q,
+                        audio_parameters=AudioQuality.HIGH,
+                        video_parameters=VideoQuality.SD_480p,
                     )
                 else:
                     stream = MediaStream(
                         link,
-                        audio_parameters=audio_q,
+                        audio_parameters=AudioQuality.HIGH,
                         video_flags=MediaStream.Flags.IGNORE
                     )
                 try:
@@ -656,7 +411,7 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                img = await get_thumb(videoid, user_id)
+                img = await get_thumb(videoid,user_id)
                 button = stream_markup(_, chat_id)
                 run = await app.send_photo(
                     chat_id=original_chat_id,
@@ -671,36 +426,29 @@ class Call(PyTgCalls):
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "tg"
-                
             elif "vid_" in queued:
                 mystic = await app.send_message(original_chat_id, _["call_7"])
                 try:
-                    stream_url, success, backup_url, quality_used = await YouTube.download(
+                    file_path, direct = await YouTube.download(
                         videoid,
                         mystic,
                         videoid=True,
                         video=True if str(streamtype) == "video" else False,
-                        quality=quality,  # ✅ Pass quality
                     )
                 except:
                     return await mystic.edit_text(
                         _["call_6"], disable_web_page_preview=True
                     )
-                
-                # ✅ Use quality from response
-                if quality_used:
-                    quality = quality_used
-                
                 if video:
                     stream = MediaStream(
-                        stream_url,
-                        audio_parameters=audio_q,
-                        video_parameters=video_q,
+                        file_path,
+                        audio_parameters=AudioQuality.HIGH,
+                        video_parameters=VideoQuality.SD_480p,
                     )
                 else:
                     stream = MediaStream(
-                        stream_url,
-                        audio_parameters=audio_q,
+                        file_path,
+                        audio_parameters=AudioQuality.HIGH,
                         video_flags=MediaStream.Flags.IGNORE
                     )
                 try:
@@ -710,7 +458,7 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                img = await get_thumb(videoid, user_id)
+                img = await get_thumb(videoid,user_id)
                 button = stream_markup(_, chat_id)
                 await mystic.delete()
                 run = await app.send_photo(
@@ -726,16 +474,15 @@ class Call(PyTgCalls):
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "stream"
-                
             elif "index_" in queued:
                 stream = (
                     MediaStream(
                         videoid,
-                        audio_parameters=audio_q,
-                        video_parameters=video_q,
+                        audio_parameters=AudioQuality.HIGH,
+                        video_parameters=VideoQuality.SD_480p,
                     )
                     if str(streamtype) == "video"
-                    else MediaStream(videoid, audio_parameters=audio_q, video_flags=MediaStream.Flags.IGNORE)
+                    else MediaStream(videoid, audio_parameters=AudioQuality.HIGH, video_flags=MediaStream.Flags.IGNORE)
                 )
                 try:
                     await client.play(chat_id, stream)
@@ -753,18 +500,17 @@ class Call(PyTgCalls):
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "tg"
-                
             else:
                 if video:
                     stream = MediaStream(
                         queued,
-                        audio_parameters=audio_q,
-                        video_parameters=video_q,
+                        audio_parameters=AudioQuality.HIGH,
+                        video_parameters=VideoQuality.SD_480p,
                     )
                 else:
                     stream = MediaStream(
                         queued,
-                        audio_parameters=audio_q,
+                        audio_parameters=AudioQuality.HIGH,
                         video_flags=MediaStream.Flags.IGNORE
                     )
                 try:
@@ -801,7 +547,7 @@ class Call(PyTgCalls):
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "tg"
                 else:
-                    img = await get_thumb(videoid, user_id)
+                    img = await get_thumb(videoid,user_id)
                     button = stream_markup(_, chat_id)
                     run = await app.send_photo(
                         chat_id=original_chat_id,
@@ -816,19 +562,6 @@ class Call(PyTgCalls):
                     )
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "stream"
-
-    # ✅ New: get_buffer_status method
-    def get_buffer_status(self, chat_id: int) -> Optional[Dict]:
-        """Get current buffer status for a chat"""
-        return buffer_status.get(chat_id)
-
-    # ✅ New: set_buffer_size method
-    def set_buffer_size(self, size: int):
-        """Set buffer size in seconds"""
-        if 3 <= size <= 30:
-            self.BUFFER_SIZE = size
-            return True
-        return False
 
     async def ping(self):
         pings = []
@@ -896,7 +629,7 @@ class Call(PyTgCalls):
         @self.three.on_update(fl.stream_end())
         @self.four.on_update(fl.stream_end())
         @self.five.on_update(fl.stream_end())
-        async def stream_end_handler1(client: PyTgCalls, update: StreamEnded):
+        async def stream_end_handler1(client:PyTgCalls, update: StreamEnded):
             await self.change_stream(client, update.chat_id)
 
 
