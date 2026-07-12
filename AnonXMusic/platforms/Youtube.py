@@ -3,7 +3,7 @@ import glob
 import os
 import random
 import re
-from typing import Union, Optional, Dict, List
+from typing import Union
 import yt_dlp
 import aiohttp
 from pyrogram.enums import MessageEntityType
@@ -37,38 +37,11 @@ class YouTubeAPI:
         self.status = "https://www.youtube.com/oembed?url="
         self.listbase = "https://youtube.com/playlist?list="
         self.reg = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-        
-        # ✅ New: Quality options
-        self.QUALITY_OPTIONS = {
-            "low": {
-                "audio": "bestaudio[abr<=64]/bestaudio",
-                "video": "bestvideo[height<=360]+bestaudio/best[height<=360]"
-            },
-            "medium": {
-                "audio": "bestaudio[abr<=128][abr>=96]/bestaudio",
-                "video": "bestvideo[height<=480]+bestaudio/best[height<=480]"
-            },
-            "high": {
-                "audio": "bestaudio[abr<=192][abr>=160]/bestaudio",
-                "video": "bestvideo[height<=720]+bestaudio/best[height<=720]"
-            },
-            "ultra": {
-                "audio": "bestaudio[abr>=256]/bestaudio",
-                "video": "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
-            }
-        }
-        
-        # ✅ New: Cache for stream URLs
-        self.stream_cache = {}
-        self.CACHE_EXPIRY = 3600  # 1 hour
-        
         self.dl_stats = {
             "total_requests": 0,
             "okflix_downloads": 0,
             "cookie_downloads": 0,
-            "existing_files": 0,
-            "cache_hits": 0,       # ✅ New
-            "cache_misses": 0      # ✅ New
+            "existing_files": 0
         }
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
@@ -170,8 +143,7 @@ class YouTubeAPI:
             thumbnail = result["thumbnails"][0]["url"].split("?")[0]
         return thumbnail
 
-    # ✅ Updated: video() method with quality support
-    async def video(self, link: str, videoid: Union[bool, str] = None, quality: str = "medium"):
+    async def video(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
         if "&" in link:
@@ -181,16 +153,11 @@ class YouTubeAPI:
         elif "&si=" in link:
             link = link.split("&si=")[0]
 
-        # ✅ Get quality format
-        if quality not in self.QUALITY_OPTIONS:
-            quality = "medium"
-        format_str = self.QUALITY_OPTIONS[quality]["video"]
-
         proc = await asyncio.create_subprocess_exec(
             "yt-dlp",
             "-g",
             "-f",
-            format_str,
+            "best[height<=?720][width<=?1280]",
             f"{link}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -361,36 +328,6 @@ class YouTubeAPI:
             LOGGER(__name__).error(f"Error in slider: {str(e)}")
             raise ValueError("Failed to fetch video details")
 
-    # ✅ New: get_cache_key method
-    def _get_cache_key(self, vid_id: str, quality: str, stream_type: str) -> str:
-        return f"{vid_id}:{quality}:{stream_type}"
-
-    # ✅ New: is_cache_valid method
-    def _is_cache_valid(self, vid_id: str, quality: str, stream_type: str) -> bool:
-        key = self._get_cache_key(vid_id, quality, stream_type)
-        if key in self.stream_cache:
-            data, timestamp = self.stream_cache[key]
-            if time.time() - timestamp < self.CACHE_EXPIRY:
-                return True
-        return False
-
-    # ✅ New: get_from_cache method
-    def _get_from_cache(self, vid_id: str, quality: str, stream_type: str) -> Optional[str]:
-        key = self._get_cache_key(vid_id, quality, stream_type)
-        if key in self.stream_cache:
-            data, timestamp = self.stream_cache[key]
-            if time.time() - timestamp < self.CACHE_EXPIRY:
-                self.dl_stats["cache_hits"] += 1
-                return data
-        self.dl_stats["cache_misses"] += 1
-        return None
-
-    # ✅ New: save_to_cache method
-    def _save_to_cache(self, vid_id: str, quality: str, stream_type: str, url: str):
-        key = self._get_cache_key(vid_id, quality, stream_type)
-        self.stream_cache[key] = (url, time.time())
-
-    # ✅ Updated: download() method with quality, cache, and backup support
     async def download(
         self,
         link: str,
@@ -401,17 +338,11 @@ class YouTubeAPI:
         songvideo: Union[bool, str] = None,
         format_id: Union[bool, str] = None,
         title: Union[bool, str] = None,
-        quality: str = "medium",           # ✅ New: quality parameter
-        prebuffer: bool = True,            # ✅ New: prebuffer flag
-        retry_count: int = 3,              # ✅ New: retry count
     ):
         """
-        Enhanced download method with quality support, caching, and backup URLs.
-        
-        Returns:
-            tuple: (stream_url, success, backup_url, quality_used)
+        Returns (stream_url, True) where stream_url is a direct audio/video URL from the backend API.
+        No file is downloaded.
         """
-        # Extract video ID
         if videoid:
             vid_id = link
         else:
@@ -419,163 +350,32 @@ class YouTubeAPI:
             vid_id = match.group(1) if match else None
 
         if not vid_id:
-            return None, False, None, None
-
-        # ✅ Check cache first
-        stream_type = "video" if video else "audio"
-        cached_url = self._get_from_cache(vid_id, quality, stream_type)
-        if cached_url:
-            logger.info(f"✅ Cache hit for {vid_id}")
-            return cached_url, True, None, quality
+            return None, False
 
         if songvideo or songaudio:
-            return None, False, None, None
+            return None, False
 
-        # ✅ Try with retries
-        for attempt in range(retry_count):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    headers = {"x-api-key": f"{YT_API_KEY}"}
-                    
-                    # ✅ Add quality parameter to API request
-                    api_url = f"{YTPROXY}/info/{vid_id}?quality={quality}&type={stream_type}&prebuffer={str(prebuffer).lower()}"
-                    
-                    async with session.get(api_url, headers=headers, timeout=30) as resp:
-                        if resp.status != 200:
-                            logger.warning(f"API attempt {attempt+1} failed: {resp.status}")
-                            if attempt < retry_count - 1:
-                                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
-                                continue
-                            return None, False, None, None
-                        
-                        data = await resp.json()
-                        if data.get("status") != "success":
-                            logger.warning(f"API error: {data.get('message')}")
-                            if attempt < retry_count - 1:
-                                await asyncio.sleep(1 * (attempt + 1))
-                                continue
-                            return None, False, None, None
-                        
-                        # ✅ Get stream URL and backup URL
-                        result_data = data.get("data", {})
-                        stream_url = result_data.get("video_url" if video else "audio_url")
-                        backup_url = result_data.get("backup_url")
-                        quality_used = result_data.get("quality", quality)
-                        
-                        if not stream_url:
-                            stream_url = result_data.get("video_url")
-                        
-                        if not stream_url:
-                            logger.error(f"No stream URL for {vid_id}")
-                            return None, False, None, None
-                        
-                        # ✅ Save to cache
-                        self._save_to_cache(vid_id, quality_used, stream_type, stream_url)
-                        
-                        logger.info(f"✅ Stream fetched for {vid_id} (quality: {quality_used})")
-                        return stream_url, True, backup_url, quality_used
-                        
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout attempt {attempt+1} for {vid_id}")
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(1 * (attempt + 1))
-                    continue
-            except Exception as e:
-                logger.error(f"Download error attempt {attempt+1}: {e}")
-                if attempt < retry_count - 1:
-                    await asyncio.sleep(1 * (attempt + 1))
-                    continue
-        
-        return None, False, None, None
-
-    # ✅ New: get_stream_with_buffer method
-    async def get_stream_with_buffer(
-        self,
-        link: str,
-        videoid: Union[bool, str] = None,
-        quality: str = "medium",
-        video: bool = False,
-    ) -> Dict:
-        """
-        Get stream URL with buffer information.
-        Returns dict with stream_url, backup_url, duration, title, etc.
-        """
-        if videoid:
-            vid_id = link
-        else:
-            match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:[&?]|$)", link)
-            vid_id = match.group(1) if match else None
-        
-        if not vid_id:
-            return {"success": False, "error": "Invalid video ID"}
-        
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {"x-api-key": f"{YT_API_KEY}"}
-                stream_type = "video" if video else "audio"
-                api_url = f"{YTPROXY}/info/{vid_id}?quality={quality}&type={stream_type}&prebuffer=true"
-                
+                api_url = f"{YTPROXY}/info/{vid_id}"
                 async with session.get(api_url, headers=headers, timeout=30) as resp:
                     if resp.status != 200:
-                        return {"success": False, "error": f"API error: {resp.status}"}
-                    
+                        logger.error(f"API returned status {resp.status}")
+                        return None, False
                     data = await resp.json()
                     if data.get("status") != "success":
-                        return {"success": False, "error": data.get("message", "Unknown error")}
-                    
-                    result_data = data.get("data", {})
-                    
-                    return {
-                        "success": True,
-                        "stream_url": result_data.get("video_url" if video else "audio_url"),
-                        "backup_url": result_data.get("backup_url"),
-                        "title": result_data.get("title", "Unknown"),
-                        "duration": result_data.get("duration_str", "0:00"),
-                        "duration_sec": result_data.get("duration", 0),
-                        "quality": result_data.get("quality", quality),
-                        "prebuffer": result_data.get("prebuffer"),
-                        "video_id": vid_id
-                    }
+                        logger.error(f"API error: {data.get('message')}")
+                        return None, False
+                    stream_url = data.get("video_url" if video else "audio_url")
+                    if not stream_url:
+                        stream_url = data.get("video_url")
+                    if not stream_url:
+                        logger.error(f"No stream URL for {vid_id}")
+                        return None, False
+                    return stream_url, True
         except Exception as e:
-            logger.error(f"get_stream_with_buffer error: {e}")
-            return {"success": False, "error": str(e)}
+            logger.error(f"Download method error: {e}")
+            return None, False
 
-    # ✅ New: clear_cache method
-    def clear_cache(self):
-        """Clear the stream cache"""
-        self.stream_cache.clear()
-        self.dl_stats["cache_hits"] = 0
-        self.dl_stats["cache_misses"] = 0
-        logger.info("🔄 Stream cache cleared")
-
-    # ✅ New: get_stats method
-    def get_stats(self) -> Dict:
-        """Get download statistics"""
-        return self.dl_stats
-
-    # ✅ New: set_quality method
-    def set_quality(self, quality: str) -> bool:
-        """Set default quality"""
-        if quality in self.QUALITY_OPTIONS:
-            self.default_quality = quality
-            return True
-        return False
-
-    # ✅ New: get_available_qualities method
-    def get_available_qualities(self) -> List[str]:
-        """Get list of available quality options"""
-        return list(self.QUALITY_OPTIONS.keys())
-
-    # ✅ New: get_quality_format method
-    def get_quality_format(self, quality: str, stream_type: str) -> Optional[str]:
-        """Get format string for specific quality and stream type"""
-        if quality not in self.QUALITY_OPTIONS:
-            return None
-        return self.QUALITY_OPTIONS[quality].get(stream_type)
-
-
-# ✅ Add time module import at top (if not already)
-import time
-
-# Create YouTube instance
 YouTube = YouTubeAPI()
