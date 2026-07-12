@@ -1,6 +1,6 @@
 import os
 from random import randint
-from typing import Union
+from typing import Union, Optional
 
 from pyrogram.types import InlineKeyboardMarkup
 
@@ -16,6 +16,16 @@ from AnonXMusic.utils.stream.queue import put_queue, put_queue_index
 from AnonXMusic.utils.thumbnails import get_thumb
 
 
+# ✅ New: Quality mapping for stream
+QUALITY_MAP = {
+    "low": {"audio_bitrate": 64, "video_height": 360},
+    "medium": {"audio_bitrate": 128, "video_height": 480},
+    "high": {"audio_bitrate": 192, "video_height": 720},
+    "ultra": {"audio_bitrate": 256, "video_height": 1080},
+}
+DEFAULT_QUALITY = "medium"
+
+
 async def stream(
     _,
     mystic,
@@ -28,12 +38,19 @@ async def stream(
     streamtype: Union[bool, str] = None,
     spotify: Union[bool, str] = None,
     forceplay: Union[bool, str] = None,
+    quality: str = DEFAULT_QUALITY,  # ✅ New: quality parameter
 ):
     if not result:
         return
     if forceplay:
         await Anony.force_stop_stream(chat_id)
-        
+    
+    # ✅ Validate quality
+    if quality not in QUALITY_MAP:
+        quality = DEFAULT_QUALITY
+    
+    quality_info = QUALITY_MAP[quality]
+    
     if streamtype == "playlist":
         msg = f"{_['play_19']}\n\n"
         count = 0
@@ -57,7 +74,7 @@ async def stream(
                 continue
                 
             if await is_active_chat(chat_id):
-                # बाद के गाने क्यू में डालो
+                # ✅ Add quality to queue
                 await put_queue(
                     chat_id,
                     original_chat_id,
@@ -68,34 +85,35 @@ async def stream(
                     vidid,
                     user_id,
                     "video" if video else "audio",
+                    quality=quality,  # ✅ Pass quality
                 )
                 position = len(db.get(chat_id)) - 1
                 count += 1
                 msg += f"{count}. {title[:70]}\n"
                 msg += f"{_['play_20']} {position}\n\n"
             else:
-                # पहला गाना – चैट अभी एक्टिव नहीं है, तो तुरंत प्ले करो
                 if not forceplay:
                     db[chat_id] = []
                 status = True if video else None
                 try:
-                    # सिर्फ URL fetch करो (डाउनलोड नहीं)
-                    file_path, direct = await YouTube.download(
-                        vidid, mystic, video=status, videoid=True
+                    # ✅ Download with quality
+                    file_path, direct, backup_url, quality_used = await YouTube.download(
+                        vidid, mystic, video=status, videoid=True, quality=quality
                     )
                 except Exception as e:
                     raise AssistantErr(_["play_14"])
-                # जॉइन कॉल और प्ले शुरू करो
+                
+                # ✅ Use buffer system
                 await Anony.join_call(
                     chat_id,
                     original_chat_id,
                     file_path,
                     video=status,
                     image=thumbnail,
+                    quality=quality,  # ✅ Pass quality
+                    use_buffer=True,   # ✅ Use buffer
                 )
-                # पहले गाने को क्यू में मत डालो (वह पहले से चल रहा है)
-                # लेकिन db[chat_id] में उसे जोड़ना ज़रूरी है (ताकि कंट्रोल पैनल दिखे)
-                # हम पहले से ही db[chat_id] को खाली कर चुके हैं, अब पहला गाना डालते हैं
+                
                 db[chat_id].append({
                     "title": title,
                     "dur": duration_min,
@@ -107,8 +125,9 @@ async def stream(
                     "vidid": vidid,
                     "seconds": duration_sec,
                     "played": 0,
+                    "quality": quality,  # ✅ Store quality
                 })
-                # थंबनेल और मैसेज भेजें
+                
                 img = await get_thumb(vidid, user_id)
                 button = stream_markup(_, chat_id)
                 run = await app.send_photo(
@@ -126,12 +145,11 @@ async def stream(
                 db[chat_id][0]["markup"] = "stream"
                 first_song_played = True
                 count += 1
-                continue  # बाकी गाने अगली iteration में क्यू में डालें (अब चैट एक्टिव हो गई है)
+                continue
         if count == 0:
             await mystic.edit_text(_["play_3"])
             return
         else:
-            # सारांश (summary) भेजें, लेकिन सिर्फ तब जब एक से अधिक गाने हों या पहला गाना चल चुका हो और बाकी हों
             if count > 1 or (count == 1 and not first_song_played):
                 link = await AnonyBin(msg)
                 lines = msg.count("\n")
@@ -157,12 +175,14 @@ async def stream(
         duration_min = result["duration_min"]
         thumbnail = result["thumb"]
         status = True if video else None
-        try:
-            file_path, direct = await YouTube.download(
-                vidid, mystic, videoid=True, video=status
-            )
-        except:
+        
+        # ✅ Download with quality
+        file_path, direct, backup_url, quality_used = await YouTube.download(
+            vidid, mystic, videoid=True, video=status, quality=quality
+        )
+        if not file_path:
             raise AssistantErr(_["play_14"])
+        
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
@@ -174,6 +194,7 @@ async def stream(
                 vidid,
                 user_id,
                 "video" if video else "audio",
+                quality=quality,  # ✅ Pass quality
             )
             position = len(db.get(chat_id)) - 1
             button = aq_markup(_, chat_id)
@@ -185,13 +206,18 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
+            
+            # ✅ Use buffer system
             await Anony.join_call(
                 chat_id,
                 original_chat_id,
                 file_path,
                 video=status,
                 image=thumbnail,
+                quality=quality,  # ✅ Pass quality
+                use_buffer=True,   # ✅ Use buffer
             )
+            
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -203,7 +229,9 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
                 forceplay=forceplay,
+                quality=quality,  # ✅ Pass quality
             )
+            
             img = await get_thumb(vidid, user_id)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
@@ -219,10 +247,13 @@ async def stream(
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "stream"
+            db[chat_id][0]["quality"] = quality  # ✅ Store quality
+            
     elif streamtype == "soundcloud":
         file_path = result["filepath"]
         title = result["title"]
         duration_min = result["duration_min"]
+        
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
@@ -234,6 +265,7 @@ async def stream(
                 streamtype,
                 user_id,
                 "audio",
+                quality=quality,  # ✅ Pass quality
             )
             position = len(db.get(chat_id)) - 1
             button = aq_markup(_, chat_id)
@@ -245,7 +277,17 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Anony.join_call(chat_id, original_chat_id, file_path, video=None)
+            
+            # ✅ Use buffer system
+            await Anony.join_call(
+                chat_id, 
+                original_chat_id, 
+                file_path, 
+                video=None,
+                quality=quality,
+                use_buffer=True,
+            )
+            
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -257,7 +299,9 @@ async def stream(
                 user_id,
                 "audio",
                 forceplay=forceplay,
+                quality=quality,  # ✅ Pass quality
             )
+            
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -269,12 +313,15 @@ async def stream(
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
+            db[chat_id][0]["quality"] = quality
+            
     elif streamtype == "telegram":
         file_path = result["path"]
         link = result["link"]
         title = (result["title"]).title()
         duration_min = result["dur"]
         status = True if video else None
+        
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
@@ -286,6 +333,7 @@ async def stream(
                 streamtype,
                 user_id,
                 "video" if video else "audio",
+                quality=quality,  # ✅ Pass quality
             )
             position = len(db.get(chat_id)) - 1
             button = aq_markup(_, chat_id)
@@ -297,7 +345,17 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            await Anony.join_call(chat_id, original_chat_id, file_path, video=status)
+            
+            # ✅ Use buffer system
+            await Anony.join_call(
+                chat_id, 
+                original_chat_id, 
+                file_path, 
+                video=status,
+                quality=quality,
+                use_buffer=True,
+            )
+            
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -309,9 +367,12 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
                 forceplay=forceplay,
+                quality=quality,  # ✅ Pass quality
             )
+            
             if video:
                 await add_active_video_chat(chat_id)
+            
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -321,6 +382,8 @@ async def stream(
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
+            db[chat_id][0]["quality"] = quality
+            
     elif streamtype == "live":
         link = result["link"]
         vidid = result["vidid"]
@@ -328,6 +391,7 @@ async def stream(
         thumbnail = result["thumb"]
         duration_min = "Live Track"
         status = True if video else None
+        
         if await is_active_chat(chat_id):
             await put_queue(
                 chat_id,
@@ -339,6 +403,7 @@ async def stream(
                 vidid,
                 user_id,
                 "video" if video else "audio",
+                quality=quality,  # ✅ Pass quality
             )
             position = len(db.get(chat_id)) - 1
             button = aq_markup(_, chat_id)
@@ -350,16 +415,23 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
-            n, file_path = await YouTube.video(link)
+            
+            # ✅ Get video with quality
+            n, file_path = await YouTube.video(link, quality=quality)
             if n == 0:
                 raise AssistantErr(_["str_3"])
+            
+            # ✅ Use buffer system
             await Anony.join_call(
                 chat_id,
                 original_chat_id,
                 file_path,
                 video=status,
                 image=thumbnail if thumbnail else None,
+                quality=quality,
+                use_buffer=True,
             )
+            
             await put_queue(
                 chat_id,
                 original_chat_id,
@@ -371,7 +443,9 @@ async def stream(
                 user_id,
                 "video" if video else "audio",
                 forceplay=forceplay,
+                quality=quality,  # ✅ Pass quality
             )
+            
             img = await get_thumb(vidid, user_id)
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
@@ -387,10 +461,13 @@ async def stream(
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
+            db[chat_id][0]["quality"] = quality
+            
     elif streamtype == "index":
         link = result
         title = "ɪɴᴅᴇx ᴏʀ ᴍ3ᴜ8 ʟɪɴᴋ"
         duration_min = "00:00"
+        
         if await is_active_chat(chat_id):
             await put_queue_index(
                 chat_id,
@@ -401,6 +478,7 @@ async def stream(
                 user_name,
                 link,
                 "video" if video else "audio",
+                quality=quality,  # ✅ Pass quality
             )
             position = len(db.get(chat_id)) - 1
             button = aq_markup(_, chat_id)
@@ -411,12 +489,17 @@ async def stream(
         else:
             if not forceplay:
                 db[chat_id] = []
+            
+            # ✅ Use buffer system
             await Anony.join_call(
                 chat_id,
                 original_chat_id,
                 link,
                 video=True if video else None,
+                quality=quality,
+                use_buffer=True,
             )
+            
             await put_queue_index(
                 chat_id,
                 original_chat_id,
@@ -427,7 +510,9 @@ async def stream(
                 link,
                 "video" if video else "audio",
                 forceplay=forceplay,
+                quality=quality,  # ✅ Pass quality
             )
+            
             button = stream_markup(_, chat_id)
             run = await app.send_photo(
                 original_chat_id,
@@ -437,4 +522,51 @@ async def stream(
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
+            db[chat_id][0]["quality"] = quality
             await mystic.delete()
+
+
+# ✅ New: Function to get stream quality info
+def get_quality_info(quality: str = DEFAULT_QUALITY) -> dict:
+    """Get quality information for a given quality level"""
+    if quality not in QUALITY_MAP:
+        quality = DEFAULT_QUALITY
+    return QUALITY_MAP[quality]
+
+
+# ✅ New: Function to format quality for display
+def format_quality(quality: str) -> str:
+    """Format quality level for display"""
+    if quality not in QUALITY_MAP:
+        quality = DEFAULT_QUALITY
+    info = QUALITY_MAP[quality]
+    if "video_height" in info:
+        return f"{quality.capitalize()} ({info['audio_bitrate']}kbps / {info['video_height']}p)"
+    return f"{quality.capitalize()} ({info['audio_bitrate']}kbps)"
+
+
+# ✅ New: Function to get stream with quality
+async def get_stream_with_quality(
+    vidid: str,
+    quality: str = DEFAULT_QUALITY,
+    video: bool = False,
+) -> dict:
+    """Get stream URL with specific quality"""
+    if quality not in QUALITY_MAP:
+        quality = DEFAULT_QUALITY
+    
+    # This function can be used to get stream info without playing
+    # Returns stream info with quality details
+    
+    result = await YouTube.get_stream_with_buffer(
+        vidid,
+        videoid=True,
+        quality=quality,
+        video=video
+    )
+    
+    if result.get("success"):
+        result["quality_info"] = QUALITY_MAP[quality]
+        result["quality_level"] = quality
+    
+    return result
