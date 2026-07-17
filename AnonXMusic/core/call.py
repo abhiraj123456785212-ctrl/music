@@ -13,7 +13,7 @@ from ntgcalls import TelegramServerError, FFmpegError
 from pytgcalls.types import Update, StreamEnded
 from pytgcalls import filters as fl
 from pytgcalls.types import AudioQuality, VideoQuality
-from pytgcalls.types import MediaStream,ChatUpdate
+from pytgcalls.types import MediaStream, ChatUpdate
 from pytgcalls.types.calls import GroupCallConfig
 
 import config
@@ -249,7 +249,7 @@ class Call(PyTgCalls):
                 video_parameters=VideoQuality.SD_480p,
             )
         else:
-            stream = MediaStream(link, audio_parameters=AudioQuality.HIGH,video_flags=MediaStream.Flags.IGNORE)
+            stream = MediaStream(link, audio_parameters=AudioQuality.HIGH, video_flags=MediaStream.Flags.IGNORE)
         await assistant.play(
             chat_id,
             stream,
@@ -283,6 +283,8 @@ class Call(PyTgCalls):
         await asyncio.sleep(0.2)
         await assistant.leave_call(config.LOGGER_ID)
 
+    # ==================== VERSION 1.1 - NEW JOIN CALL WITH SMART QUALITY ====================
+
     async def join_call(
         self,
         chat_id: int,
@@ -294,47 +296,50 @@ class Call(PyTgCalls):
         assistant = await group_assistant(self, chat_id)
         language = await get_lang(chat_id)
         _ = get_string(language)
+
+        # ========== NEW: Smart Quality Selection ==========
+        quality = await self._get_optimal_quality()
+
         if video:
-            stream= MediaStream(
+            stream = MediaStream(
                 link,
-                audio_parameters=AudioQuality.HIGH,video_parameters=VideoQuality.SD_480p
-                )
-            # stream = AudioVideoPiped(
-            #     link,
-            #     audio_parameters=HighQualityAudio(),
-            #     video_parameters=MediumQualityVideo(),
-            # )
+                audio_parameters=quality["audio"],
+                video_parameters=quality["video"],
+            )
         else:
-            stream = (
-                MediaStream(
-                    link,
-                    audio_parameters=AudioQuality.HIGH,
-                    video_parameters=VideoQuality.SD_480p,
-                    
+            stream = MediaStream(
+                link,
+                audio_parameters=quality["audio"],
+                video_flags=MediaStream.Flags.IGNORE
+            )
+
+        # ========== NEW: Retry Logic ==========
+        max_retries = config.STREAM_MAX_RETRIES
+        for attempt in range(max_retries):
+            try:
+                await assistant.play(
+                    chat_id,
+                    stream,
+                    config=GroupCallConfig(auto_start=False),
                 )
-                if video
-                else MediaStream(link, audio_parameters=AudioQuality.HIGH,video_flags=MediaStream.Flags.IGNORE)
-            )
-        try:
-            await assistant.play(
-                chat_id,
-                stream,
-                config=GroupCallConfig(auto_start=False),
-            )
-            # await assistant.join_group_call(
-            #     chat_id,
-            #     stream,
-            #     stream_type=StreamType().pulse_stream,
-            # )
-        except NoActiveGroupCall:
-            raise AssistantErr(_["call_8"])
-        except FFmpegError:
-            LOGGER(__name__).warning("ffmpeg/ffprobe is not installed on the system")
-            raise AssistantErr(
-                "⚠️ <b>ffmpeg</b> is not installed on this server.\n\nPlease install it using: <code>apt install ffmpeg</code>"
-            )
-        except TelegramServerError:
-            raise AssistantErr(_["call_10"])
+                # ========== NEW: Start Monitor ==========
+                asyncio.create_task(self._monitor_stream(chat_id, link, video))
+                break
+            except NoActiveGroupCall:
+                raise AssistantErr(_["call_8"])
+            except FFmpegError:
+                LOGGER(__name__).warning("ffmpeg/ffprobe is not installed on the system")
+                raise AssistantErr(
+                    "⚠️ <b>ffmpeg</b> is not installed on this server.\n\n"
+                    "Please install it using: <code>apt install ffmpeg</code>"
+                )
+            except TelegramServerError:
+                raise AssistantErr(_["call_10"])
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
         await add_active_chat(chat_id)
         await music_on(chat_id)
         if video:
@@ -344,6 +349,142 @@ class Call(PyTgCalls):
             users = len(await assistant.get_participants(chat_id))
             if users == 1:
                 autoend[chat_id] = datetime.now() + timedelta(minutes=1)
+
+    # ==================== VERSION 1.1 - NEW: QUALITY & MONITOR FUNCTIONS ====================
+
+    async def _get_optimal_quality(self):
+        """Auto quality based on network speed"""
+        try:
+            import time
+            import aiohttp
+            start = time.time()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://www.youtube.com/",
+                    timeout=5
+                ) as response:
+                    await response.read()
+            speed = 10 / (time.time() - start) if (time.time() - start) > 0 else 5
+            speed = min(speed, 50)
+        except:
+            speed = 3  # Default fallback
+
+        if speed > 5:  # >5 Mbps
+            return {"audio": AudioQuality.HIGH, "video": VideoQuality.SD_480p}
+        elif speed > 2:  # 2-5 Mbps
+            return {"audio": AudioQuality.MEDIUM, "video": VideoQuality.SD_360p}
+        else:  # <2 Mbps
+            return {"audio": AudioQuality.LOW, "video": VideoQuality.SD_240p}
+
+    async def _monitor_stream(self, chat_id: int, link: str, video: bool):
+        """Monitor and auto-recover on buffer"""
+        buffer_count = 0
+        quality_fallback = config.STREAM_QUALITY_FALLBACK
+
+        while await self._is_stream_active(chat_id):
+            await asyncio.sleep(config.STREAM_MONITOR_INTERVAL)
+
+            try:
+                # Check if song is still playing
+                playing = db.get(chat_id)
+                if not playing:
+                    break
+
+                # If buffer detected (played not increasing)
+                old_played = playing[0].get("played", 0)
+                await asyncio.sleep(2)
+                new_played = db.get(chat_id, [{}])[0].get("played", 0)
+
+                if old_played == new_played and old_played > 0:
+                    buffer_count += 1
+
+                    # Wait for buffer recovery
+                    recovered = False
+                    for _ in range(config.STREAM_BUFFER_WAIT // 2):
+                        await asyncio.sleep(2)
+                        check = db.get(chat_id, [{}])[0].get("played", 0)
+                        if check > new_played:
+                            recovered = True
+                            break
+
+                    if not recovered:
+                        # Buffer failed - try to reconnect
+                        if buffer_count >= quality_fallback:
+                            # Lower quality and reconnect
+                            await self._reconnect_with_lower_quality(chat_id, link, video)
+                            buffer_count = 0
+                        else:
+                            # Just reconnect
+                            await self._reconnect_stream(chat_id, link, video)
+                else:
+                    buffer_count = 0
+
+            except Exception as e:
+                continue
+
+    async def _is_stream_active(self, chat_id: int) -> bool:
+        """Check if stream is still active"""
+        from AnonXMusic.utils.database import is_active_chat
+        return await is_active_chat(chat_id)
+
+    async def _reconnect_stream(self, chat_id: int, link: str, video: bool):
+        """Reconnect stream on buffer"""
+        try:
+            assistant = await group_assistant(self, chat_id)
+            quality = await self._get_optimal_quality()
+
+            if video:
+                stream = MediaStream(
+                    link,
+                    audio_parameters=quality["audio"],
+                    video_parameters=quality["video"],
+                )
+            else:
+                stream = MediaStream(
+                    link,
+                    audio_parameters=quality["audio"],
+                    video_flags=MediaStream.Flags.IGNORE
+                )
+
+            await assistant.play(chat_id, stream)
+        except Exception as e:
+            pass
+
+    async def _reconnect_with_lower_quality(self, chat_id: int, link: str, video: bool):
+        """Reconnect with lower quality"""
+        try:
+            assistant = await group_assistant(self, chat_id)
+
+            # Force lower quality
+            quality = {"audio": AudioQuality.LOW, "video": VideoQuality.SD_240p}
+
+            if video:
+                stream = MediaStream(
+                    link,
+                    audio_parameters=quality["audio"],
+                    video_parameters=quality["video"],
+                )
+            else:
+                stream = MediaStream(
+                    link,
+                    audio_parameters=quality["audio"],
+                    video_flags=MediaStream.Flags.IGNORE
+                )
+
+            await assistant.play(chat_id, stream)
+
+            # Notify user
+            try:
+                await app.send_message(
+                    chat_id,
+                    "⚠️ Network slow detected!\n📡 Lowering quality to maintain smooth playback."
+                )
+            except:
+                pass
+        except Exception as e:
+            pass
+
+    # ==================== EXISTING FUNCTIONS (No Change) ====================
 
     async def change_stream(self, client, chat_id):
         check = db.get(chat_id)
@@ -411,7 +552,7 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                img = await get_thumb(videoid,user_id)
+                img = await get_thumb(videoid, user_id)
                 button = stream_markup(_, chat_id)
                 run = await app.send_photo(
                     chat_id=original_chat_id,
@@ -458,7 +599,7 @@ class Call(PyTgCalls):
                         original_chat_id,
                         text=_["call_6"],
                     )
-                img = await get_thumb(videoid,user_id)
+                img = await get_thumb(videoid, user_id)
                 button = stream_markup(_, chat_id)
                 await mystic.delete()
                 run = await app.send_photo(
@@ -547,7 +688,7 @@ class Call(PyTgCalls):
                     db[chat_id][0]["mystic"] = run
                     db[chat_id][0]["markup"] = "tg"
                 else:
-                    img = await get_thumb(videoid,user_id)
+                    img = await get_thumb(videoid, user_id)
                     button = stream_markup(_, chat_id)
                     run = await app.send_photo(
                         chat_id=original_chat_id,
@@ -593,32 +734,32 @@ class Call(PyTgCalls):
     async def decorators(self):
         @self.one.on_update(
                 fl.chat_update(
-                    ChatUpdate.Status.KICKED | 
-                    ChatUpdate.Status.LEFT_GROUP | 
+                    ChatUpdate.Status.KICKED |
+                    ChatUpdate.Status.LEFT_GROUP |
                     ChatUpdate.Status.CLOSED_VOICE_CHAT
                     ))
         @self.two.on_update(
                 fl.chat_update(
-                    ChatUpdate.Status.KICKED | 
-                    ChatUpdate.Status.LEFT_GROUP | 
+                    ChatUpdate.Status.KICKED |
+                    ChatUpdate.Status.LEFT_GROUP |
                     ChatUpdate.Status.CLOSED_VOICE_CHAT
                     ))
         @self.three.on_update(
                 fl.chat_update(
-                    ChatUpdate.Status.KICKED | 
-                    ChatUpdate.Status.LEFT_GROUP | 
+                    ChatUpdate.Status.KICKED |
+                    ChatUpdate.Status.LEFT_GROUP |
                     ChatUpdate.Status.CLOSED_VOICE_CHAT
                     ))
         @self.four.on_update(
                 fl.chat_update(
-                    ChatUpdate.Status.KICKED | 
-                    ChatUpdate.Status.LEFT_GROUP | 
+                    ChatUpdate.Status.KICKED |
+                    ChatUpdate.Status.LEFT_GROUP |
                     ChatUpdate.Status.CLOSED_VOICE_CHAT
                     ))
         @self.five.on_update(
                 fl.chat_update(
-                    ChatUpdate.Status.KICKED | 
-                    ChatUpdate.Status.LEFT_GROUP | 
+                    ChatUpdate.Status.KICKED |
+                    ChatUpdate.Status.LEFT_GROUP |
                     ChatUpdate.Status.CLOSED_VOICE_CHAT
                     ))
         async def stream_services_handler(client, update: Update):
@@ -629,7 +770,7 @@ class Call(PyTgCalls):
         @self.three.on_update(fl.stream_end())
         @self.four.on_update(fl.stream_end())
         @self.five.on_update(fl.stream_end())
-        async def stream_end_handler1(client:PyTgCalls, update: StreamEnded):
+        async def stream_end_handler1(client: PyTgCalls, update: StreamEnded):
             await self.change_stream(client, update.chat_id)
 
 
