@@ -328,6 +328,83 @@ class YouTubeAPI:
             LOGGER(__name__).error(f"Error in slider: {str(e)}")
             raise ValueError("Failed to fetch video details")
 
+    # ==================== VERSION 1.1 - UPDATED: get_stream_url (Better Name) ====================
+
+    async def get_stream_url(
+        self,
+        link: str,
+        mystic=None,
+        video: Union[bool, str] = None,
+        videoid: Union[bool, str] = None,
+        songaudio: Union[bool, str] = None,
+        songvideo: Union[bool, str] = None,
+        format_id: Union[bool, str] = None,
+        title: Union[bool, str] = None,
+    ):
+        """
+        Returns (stream_url, True) where stream_url is a direct audio/video URL from the backend API.
+        NO FILE DOWNLOAD! Direct streaming only.
+        """
+        if videoid:
+            vid_id = link
+        else:
+            match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:[&?]|$)", link)
+            vid_id = match.group(1) if match else None
+
+        if not vid_id:
+            logger.error("No video ID found in URL")
+            return None, False
+
+        if songvideo or songaudio:
+            logger.warning("songaudio/songvideo not supported in get_stream_url")
+            return None, False
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {"x-api-key": f"{YT_API_KEY}"}
+                api_url = f"{YTPROXY}/info/{vid_id}"
+                
+                logger.info(f"Fetching stream URL for: {vid_id} (video={video})")
+                
+                async with session.get(api_url, headers=headers, timeout=30) as resp:
+                    if resp.status != 200:
+                        logger.error(f"API returned status {resp.status}")
+                        return None, False
+                    
+                    data = await resp.json()
+                    
+                    if data.get("status") != "success":
+                        logger.error(f"API error: {data.get('message')}")
+                        return None, False
+                    
+                    # ========== NEW: Try video first, then audio ==========
+                    stream_url = data.get("video_url" if video else "audio_url")
+                    
+                    if not stream_url:
+                        stream_url = data.get("video_url")
+                    
+                    if not stream_url:
+                        stream_url = data.get("audio_url")
+                    
+                    if not stream_url:
+                        logger.error(f"No stream URL found for {vid_id}")
+                        return None, False
+                    
+                    logger.info(f"✅ Stream URL fetched successfully for {vid_id}")
+                    return stream_url, True
+                    
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP Client Error: {e}")
+            return None, False
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching stream for {vid_id}")
+            return None, False
+        except Exception as e:
+            logger.error(f"Unexpected error in get_stream_url: {e}")
+            return None, False
+
+    # ==================== VERSION 1.1 - LEGACY: download() calls get_stream_url() ====================
+
     async def download(
         self,
         link: str,
@@ -340,42 +417,19 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ):
         """
-        Returns (stream_url, True) where stream_url is a direct audio/video URL from the backend API.
-        No file is downloaded.
+        LEGACY FUNCTION: Calls get_stream_url() internally.
+        Kept for backward compatibility with existing code.
         """
-        if videoid:
-            vid_id = link
-        else:
-            match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:[&?]|$)", link)
-            vid_id = match.group(1) if match else None
+        return await self.get_stream_url(
+            link=link,
+            mystic=mystic,
+            video=video,
+            videoid=videoid,
+            songaudio=songaudio,
+            songvideo=songvideo,
+            format_id=format_id,
+            title=title,
+        )
 
-        if not vid_id:
-            return None, False
-
-        if songvideo or songaudio:
-            return None, False
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {"x-api-key": f"{YT_API_KEY}"}
-                api_url = f"{YTPROXY}/info/{vid_id}"
-                async with session.get(api_url, headers=headers, timeout=30) as resp:
-                    if resp.status != 200:
-                        logger.error(f"API returned status {resp.status}")
-                        return None, False
-                    data = await resp.json()
-                    if data.get("status") != "success":
-                        logger.error(f"API error: {data.get('message')}")
-                        return None, False
-                    stream_url = data.get("video_url" if video else "audio_url")
-                    if not stream_url:
-                        stream_url = data.get("video_url")
-                    if not stream_url:
-                        logger.error(f"No stream URL for {vid_id}")
-                        return None, False
-                    return stream_url, True
-        except Exception as e:
-            logger.error(f"Download method error: {e}")
-            return None, False
 
 YouTube = YouTubeAPI()
