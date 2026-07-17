@@ -6,6 +6,8 @@ from pyrogram import filters
 
 load_dotenv()
 
+# ==================== MAIN CONFIG ====================
+
 # Get this value from my.telegram.org/apps
 API_ID = int(getenv("API_ID"))
 API_HASH = getenv("API_HASH")
@@ -16,24 +18,34 @@ BOT_TOKEN = getenv("BOT_TOKEN")
 # Get your mongo url from cloud.mongodb.com
 MONGO_DB_URI = getenv("MONGO_DB_URI", None)
 
-# Vars For API End Pont.
-YTPROXY_URL = getenv("YTPROXY_URL", 'http://127.0.0.1:9898') ## xBit Music Endpoint.
-YT_API_KEY = getenv("YT_API_KEY" , None ) ## Your API key like: xbit_10000000xx0233 Get from  https://t.me/tgmusic_apibot
+# ==================== YT API CONFIG ====================
 
-## Other vaes
+# Vars For API End Point.
+YTPROXY_URL = getenv("YTPROXY_URL", 'http://127.0.0.1:9898')  # xBit Music Endpoint.
+YT_API_KEY = getenv("YT_API_KEY", None)  # Your API key like: xbit_10000000xx0233
+
+# ==================== DURATION LIMIT ====================
+
 DURATION_LIMIT_MIN = int(getenv("DURATION_LIMIT", 300))
+
+# ==================== LOGGING ====================
 
 # Chat id of a group for logging bot's activities
 LOGGER_ID = int(getenv("LOGGER_ID"))
 
+# ==================== OWNER ====================
+
 # Get this value from @FallenxBot on Telegram by /id
 OWNER_ID = int(getenv("OWNER_ID"))
 
-## Fill these variables if you're deploying on heroku.
+# ==================== HEROKU CONFIG ====================
+
 # Your heroku app name
 HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
 # Get it from http://dashboard.heroku.com/account
 HEROKU_API_KEY = getenv("HEROKU_API_KEY")
+
+# ==================== GIT/UPSTREAM ====================
 
 UPSTREAM_REPO = getenv(
     "UPSTREAM_REPO",
@@ -44,22 +56,29 @@ GIT_TOKEN = getenv(
     "GIT_TOKEN", None
 )  # Fill this variable if your upstream repository is private
 
+# ==================== SUPPORT ====================
+
 SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/AeraxTi")
 SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/AeraxTi")
 
+# ==================== AUTO LEAVE ====================
+
 # Set this to True if you want the assistant to automatically leave chats after an interval
 AUTO_LEAVING_ASSISTANT = bool(getenv("AUTO_LEAVING_ASSISTANT", False))
-ASSISTANT_LEAVE_TIME = int(getenv("ASSISTANT_LEAVE_TIME",  5400))
+ASSISTANT_LEAVE_TIME = int(getenv("ASSISTANT_LEAVE_TIME", 5400))
 
+# ==================== SPOTIFY ====================
 
 # Get this credentials from https://developer.spotify.com/dashboard
 SPOTIFY_CLIENT_ID = getenv("SPOTIFY_CLIENT_ID", "1c21247d714244ddbb09925dac565aed")
 SPOTIFY_CLIENT_SECRET = getenv("SPOTIFY_CLIENT_SECRET", "709e1a2969664491b58200860623ef19")
 
+# ==================== PLAYLIST ====================
 
 # Maximum limit for fetching playlist's track from youtube, spotify, apple links.
 PLAYLIST_FETCH_LIMIT = int(getenv("PLAYLIST_FETCH_LIMIT", 25))
 
+# ==================== FILE SIZE LIMITS ====================
 
 # Telegram audio and video file size limit (in bytes)
 TG_AUDIO_FILESIZE_LIMIT = int(getenv("TG_AUDIO_FILESIZE_LIMIT", 204857600))
@@ -68,10 +87,12 @@ TG_VIDEO_FILESIZE_LIMIT = int(getenv("TG_VIDEO_FILESIZE_LIMIT", 2073741824))
 
 PRIVATE_BOT_MODE_MEM = int(getenv("PRIVATE_BOT_MODE_MEM", 1))
 
+# ==================== CACHE ====================
 
-CACHE_DURATION = int(getenv("CACHE_DURATION" , "86400"))  #60*60*24
-CACHE_SLEEP = int(getenv("CACHE_SLEEP" , "3600"))   #60*60
+CACHE_DURATION = int(getenv("CACHE_DURATION", "86400"))  # 60*60*24
+CACHE_SLEEP = int(getenv("CACHE_SLEEP", "3600"))  # 60*60
 
+# ==================== STRING SESSIONS ====================
 
 # Get your pyrogram v2 session from @StringFatherBot on Telegram
 STRING1 = getenv("STRING_SESSION", None)
@@ -80,6 +101,31 @@ STRING3 = getenv("STRING_SESSION3", None)
 STRING4 = getenv("STRING_SESSION4", None)
 STRING5 = getenv("STRING_SESSION5", None)
 
+# ==================== VERSION 1.1 - NEW SETTINGS ====================
+
+# ---------- Stream Management ----------
+# Auto Quality & Buffer Control
+STREAM_BUFFER_WAIT = int(getenv("STREAM_BUFFER_WAIT", 10))  # Seconds to wait for buffer recovery
+STREAM_MAX_RETRIES = int(getenv("STREAM_MAX_RETRIES", 3))  # Max retry attempts on failure
+STREAM_QUALITY_FALLBACK = int(getenv("STREAM_QUALITY_FALLBACK", 3))  # Retries before quality drop
+STREAM_AUTO_QUALITY = bool(getenv("STREAM_AUTO_QUALITY", True))  # Auto adjust quality based on network
+STREAM_MONITOR_INTERVAL = int(getenv("STREAM_MONITOR_INTERVAL", 3))  # Check stream every X seconds
+
+# ---------- Redis Cache ----------
+REDIS_URL = getenv("REDIS_URL", None)  # Redis URL for caching (optional)
+CACHE_TTL = int(getenv("CACHE_TTL", 3600))  # Cache time to live in seconds
+
+# ---------- Queue Persistence ----------
+QUEUE_PERSISTENCE = bool(getenv("QUEUE_PERSISTENCE", False))  # Save queue to database on restart
+
+# ---------- AI Features ----------
+AI_HISTORY_LIMIT = int(getenv("AI_HISTORY_LIMIT", 10))  # Max chat history per user
+AI_RATE_LIMIT = int(getenv("AI_RATE_LIMIT", 5))  # Seconds between AI requests
+
+# ---------- Lyrics ----------
+LYRICS_API = getenv("LYRICS_API", "https://api.lyrics.ovh/v1/")  # Lyrics API endpoint
+
+# ==================== GLOBALS ====================
 
 BANNED_USERS = filters.user()
 adminlist = {}
@@ -89,10 +135,14 @@ autoclean = []
 confirmer = {}
 file_cache: dict[str, float] = {}
 
-START_IMG_URL = ["https://te.legra.ph/file/5fd13f2cc0d03bce9f7f2.jpg",
-                 "https://te.legra.ph/file/c15d01b3e6b40ea141dc9.jpg",
-                 "https://te.legra.ph/file/5fd13f2cc0d03bce9f7f2.jpg"]
-    
+# ==================== IMAGE URLs ====================
+
+START_IMG_URL = [
+    "https://te.legra.ph/file/5fd13f2cc0d03bce9f7f2.jpg",
+    "https://te.legra.ph/file/c15d01b3e6b40ea141dc9.jpg",
+    "https://te.legra.ph/file/5fd13f2cc0d03bce9f7f2.jpg"
+]
+
 PING_IMG_URL = getenv(
     "PING_IMG_URL", "https://telegra.ph/file/87f680aead03443f291b0.jpg"
 )
@@ -107,15 +157,15 @@ SPOTIFY_ARTIST_IMG_URL = "https://graph.org/file/0bb6f36796d496b4254ff.jpg"
 SPOTIFY_ALBUM_IMG_URL = "https://graph.org/file/0bb6f36796d496b4254ff.jpg"
 SPOTIFY_PLAYLIST_IMG_URL = "https://graph.org/file/0bb6f36796d496b4254ff.jpg"
 
-
+# ==================== HELPERS ====================
 
 def time_to_seconds(time):
     stringt = str(time)
     return sum(int(x) * 60**i for i, x in enumerate(reversed(stringt.split(":"))))
 
-
 DURATION_LIMIT = int(time_to_seconds(f"{DURATION_LIMIT_MIN}:360"))
 
+# ==================== VALIDATIONS ====================
 
 if SUPPORT_CHANNEL:
     if not re.match("(?:http|https)://", SUPPORT_CHANNEL):
