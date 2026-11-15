@@ -1,10 +1,24 @@
+
 rm -f logs.txt log.txt
 rm -rf __pycache__
 rm -f *.session
+
+echo "Starting AERA MUSIC Health Server..."
+
+python3 health_server.py &
+
+HEALTH_PID=$!
+
+echo "Health server PID: $HEALTH_PID"
+
 echo "Disabling IPV6"
-sysctl -w net.ipv6.conf.all.disable_ipv6=1 &
-sysctl -w net.ipv6.conf.default.disable_ipv6=1 &
-sysctl -w net.ipv6.conf.lo.disable_ipv6=1 & 
+
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+sysctl -w net.ipv6.conf.lo.disable_ipv6=1 2>/dev/null || true
+
 sleep 2
+
 echo "Starting Bot..."
+
 uv run python3 -m AnonXMusic
