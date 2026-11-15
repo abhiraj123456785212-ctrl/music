@@ -21,7 +21,7 @@ MONGO_DB_URI = getenv("MONGO_DB_URI", None)
 # ==================== YT API CONFIG ====================
 
 # Vars For API End Point.
-YTPROXY_URL = getenv("YTPROXY_URL", 'http://127.0.0.1:9898')  # xBit Music Endpoint.
+YTPROXY_URL = getenv("YTPROXY_URL", 'http://172.18.0.116:9898')  # xBit Music Endpoint.
 YT_API_KEY = getenv("YT_API_KEY", None)  # Your API key like: xbit_10000000xx0233
 
 # ==================== DURATION LIMIT ====================
